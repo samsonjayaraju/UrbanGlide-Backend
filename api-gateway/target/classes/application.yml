@@ -1,0 +1,38 @@
+server:
+  port: 8080
+spring:
+  application:
+    name: api-gateway
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+---
+spring:
+  cloud:
+    gateway:
+      server:
+        webflux:
+          routes:
+            - id: auth
+              uri: lb://auth-service
+              predicates: [Path=/api/auth/**]
+            - id: drivers
+              uri: lb://driver-service
+              predicates: [Path=/api/drivers/**]
+            - id: rides
+              uri: lb://ride-service
+              predicates: [Path=/api/rides/**]
+            - id: payments
+              uri: lb://payment-service
+              predicates: [Path=/api/payments/**]
+          default-filters:
+            - RemoveRequestHeader=X-Internal-Key
