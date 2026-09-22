@@ -1,0 +1,41 @@
+server:
+  port: 8083
+spring:
+  application:
+    name: ride-service
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/urbanglide_ride?createDatabaseIfNotExist=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: update
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+  instance:
+    prefer-ip-address: true
+    instance-id: ${spring.application.name}:${server.port}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+security:
+  jwt:
+    # Same secret in all four business services; at least 32 ASCII characters.
+    secret: ${JWT_SECRET:urbanglide-local-demo-secret-change-me-2026}
+    issuer: urbanglide-auth
+    expiration-seconds: 7200
+  internal-key: ${INTERNAL_API_KEY:urbanglide-local-internal-key-change-me}
+fare:
+  base-fare: 50.00
+  price-per-km: 15.00
+  minimum-fare: 60.00
+matching:
+  radius-km: 5.0
