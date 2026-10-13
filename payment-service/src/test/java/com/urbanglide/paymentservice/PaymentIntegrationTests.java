@@ -10,8 +10,8 @@ import com.urbanglide.paymentservice.service.PaymentService;
 import java.math.BigDecimal;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -23,9 +23,11 @@ class PaymentIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired PaymentRepository payments;
   @Autowired PaymentService service;
+  @Autowired com.urbanglide.paymentservice.repository.NotificationOutboxRepository outbox;
 
   @BeforeEach
   void clean() {
+    outbox.deleteAll();
     payments.deleteAll();
   }
 
@@ -42,6 +44,7 @@ class PaymentIntegrationTests {
                 .content("{\"paymentMethod\":\"UPI\"}"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("paymentStatus").value("SUCCESS"));
+    assertEquals(1, outbox.count());
     String reference =
         payments.findById(payment.paymentId()).orElseThrow().getTransactionReference();
     mvc.perform(

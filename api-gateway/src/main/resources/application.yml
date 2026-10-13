@@ -34,5 +34,14 @@ spring:
             - id: payments
               uri: lb://payment-service
               predicates: [Path=/api/payments/**]
+            - id: notifications
+              uri: lb://notification-service
+              predicates: [Path=/api/notifications/**]
+            - id: reviews
+              uri: lb://rating-service
+              predicates: [Path=/api/reviews/**]
+            - id: locations
+              uri: lb://location-service
+              predicates: [Path=/api/locations/**]
           default-filters:
             - RemoveRequestHeader=X-Internal-Key

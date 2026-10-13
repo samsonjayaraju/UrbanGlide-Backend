@@ -4,14 +4,19 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import com.urbanglide.driverservice.client.*;
+import com.urbanglide.driverservice.dto.*;
 import com.urbanglide.driverservice.exception.ApiException;
 import com.urbanglide.driverservice.repository.DriverRepository;
 import com.urbanglide.driverservice.service.DriverService;
-import com.urbanglide.driverservice.service.GeoDistance;
+import java.time.Instant;
+import java.util.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
@@ -19,7 +24,62 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(DriverIntegrationTests.Clients.class)
 class DriverIntegrationTests {
+  @TestConfiguration
+  static class Clients {
+    @Bean
+    @Primary
+    FakeLocations locations() {
+      return new FakeLocations();
+    }
+
+    @Bean
+    @Primary
+    RatingClient ratings() {
+      return id -> new RatingSummary(id, 0, 0);
+    }
+  }
+
+  static class FakeLocations implements LocationClient {
+    Map<Long, LocationResponse> points = new HashMap<>();
+
+    public LocationResponse get(Long id) {
+      if (!points.containsKey(id))
+        throw feign.FeignException.errorStatus(
+            "get",
+            feign.Response.builder()
+                .status(404)
+                .reason("missing")
+                .request(
+                    feign.Request.create(
+                        feign.Request.HttpMethod.GET,
+                        "http://test",
+                        Map.of(),
+                        (byte[]) null,
+                        java.nio.charset.StandardCharsets.UTF_8,
+                        null))
+                .build());
+      return points.get(id);
+    }
+
+    public LocationResponse update(Long id, DriverLocationRequest r) {
+      var p = new LocationResponse(id, r.latitude(), r.longitude(), Instant.now(), false);
+      points.put(id, p);
+      return p;
+    }
+
+    public List<NearbyDriverResponse> nearby(double lat, double lon, double radius) {
+      return points.values().stream()
+          .map(p -> new NearbyDriverResponse(p.driverId(), Math.abs(lat - p.latitude()) * 111.195))
+          .filter(p -> p.distanceKm() <= radius)
+          .sorted(Comparator.comparingDouble(NearbyDriverResponse::distanceKm))
+          .toList();
+    }
+  }
+
+  @Autowired FakeLocations locations;
+
   @Autowired MockMvc mvc;
   @Autowired DriverRepository drivers;
   @Autowired DriverService service;
@@ -27,6 +87,7 @@ class DriverIntegrationTests {
   @BeforeEach
   void clean() {
     drivers.deleteAll();
+    locations.points.clear();
   }
 
   private String token(long id) {
@@ -100,12 +161,5 @@ class DriverIntegrationTests {
             get("/internal/drivers/by-user/1")
                 .header("X-Internal-Key", "urbanglide-local-internal-key-change-me"))
         .andExpect(status().isOk());
-  }
-
-  @Test
-  void haversineKnownDistances() {
-    assertEquals(0, GeoDistance.kilometers(0, 0, 0, 0), 0.0001);
-    assertEquals(111.195, GeoDistance.kilometers(0, 0, 1, 0), 0.01);
-    assertEquals(20015.114, GeoDistance.kilometers(0, 0, 0, 180), 0.01);
   }
 }

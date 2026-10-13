@@ -30,6 +30,7 @@ public class RideService {
   private final FareService fares;
   private final TransactionTemplate transaction;
   private final double radius;
+  private final NotificationQueue notifications;
 
   public RideService(
       RideRepository rides,
@@ -38,7 +39,9 @@ public class RideService {
       PaymentClient payments,
       FareService fares,
       PlatformTransactionManager manager,
+      NotificationQueue notifications,
       @Value("${matching.radius-km}") double radius) {
+    this.notifications = notifications;
     this.rides = rides;
     this.offers = offers;
     this.drivers = drivers;
@@ -78,8 +81,16 @@ public class RideService {
             offer.setStatus(RideOfferStatus.PENDING);
             offer.setCreatedAt(Instant.now());
             offers.save(offer);
+            Long recipient = remote(() -> drivers.byId(driver.driverId())).userId();
+            notifications.add(
+                "offer:" + ride.getRideId() + ":" + recipient,
+                recipient,
+                ride.getRideId(),
+                "RIDE_OFFER",
+                "A nearby passenger requested a ride. Check your pending offers.");
           }
           if (nearby.isEmpty()) ride.setStatus(RideStatus.NO_DRIVER_AVAILABLE);
+          notifyPassenger(ride);
           return response(ride);
         });
   }
@@ -129,6 +140,7 @@ public class RideService {
                       ? RideOfferStatus.ACCEPTED
                       : RideOfferStatus.CANCELLED);
             }
+            notifyPassenger(ride);
             rides.flush();
             offers.flush();
             return response(ride);
@@ -161,6 +173,7 @@ public class RideService {
           if (offers.findByRideId(rideId).stream()
               .noneMatch(o -> o.getStatus() == RideOfferStatus.PENDING))
             ride.setStatus(RideStatus.NO_DRIVER_AVAILABLE);
+          if (ride.getStatus() == RideStatus.NO_DRIVER_AVAILABLE) notifyPassenger(ride);
           return response(ride);
         });
   }
@@ -179,6 +192,7 @@ public class RideService {
                 return response(ride);
               RideLifecycle.validateDriverTransition(ride.getStatus(), next);
               ride.setStatus(next);
+              notifyPassenger(ride);
               if (next == RideStatus.COMPLETED) {
                 double distance =
                     GeoDistance.kilometers(
@@ -229,6 +243,7 @@ public class RideService {
           if (ride.getStatus() != RideStatus.SEARCHING && ride.getStatus() != RideStatus.REQUESTED)
             throw new InvalidRideStatusException("Cancellation is allowed only before assignment");
           ride.setStatus(RideStatus.CANCELLED);
+          notifyPassenger(ride);
           offers
               .findByRideId(rideId)
               .forEach(
@@ -257,6 +272,19 @@ public class RideService {
     if (CurrentUser.role().equals("DRIVER")) owner = currentDriver().equals(ride.getDriverId());
     if (!owner) throw new UnauthorizedActionException("Ride does not belong to you");
     return response(ride);
+  }
+
+  public RideResponseDto internalGet(Long rideId) {
+    return response(find(rideId));
+  }
+
+  private void notifyPassenger(Ride ride) {
+    notifications.add(
+        "ride:" + ride.getRideId() + ":" + ride.getStatus(),
+        ride.getPassengerId(),
+        ride.getRideId(),
+        "RIDE_STATUS",
+        "Ride " + ride.getRideId() + " is " + ride.getStatus() + ".");
   }
 
   private Long currentDriver() {

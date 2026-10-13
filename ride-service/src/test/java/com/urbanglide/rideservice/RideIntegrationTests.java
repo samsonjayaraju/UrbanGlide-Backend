@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.urbanglide.rideservice.client.*;
 import com.urbanglide.rideservice.dto.*;
 import com.urbanglide.rideservice.enums.*;
@@ -16,13 +15,14 @@ import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -56,6 +56,10 @@ class RideIntegrationTests {
           : List.of(new NearbyDriverResponse(10L, 0.1), new NearbyDriverResponse(20L, 0.2));
     }
 
+    public DriverIdentity byId(Long id) {
+      return new DriverIdentity(id, id);
+    }
+
     public DriverIdentity byUser(Long id) {
       return new DriverIdentity(id, id);
     }
@@ -87,6 +91,7 @@ class RideIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper json;
   @Autowired RideRepository rides;
+  @Autowired NotificationOutboxRepository outbox;
   @Autowired RideOfferRepository offers;
   @Autowired FakeDriverClient drivers;
   @Autowired FakePaymentClient payments;
@@ -94,6 +99,7 @@ class RideIntegrationTests {
 
   @BeforeEach
   void clean() {
+    outbox.deleteAll();
     offers.deleteAll();
     rides.deleteAll();
     drivers.reservations.clear();
@@ -150,6 +156,7 @@ class RideIntegrationTests {
     long id = create();
     assertEquals(RideStatus.SEARCHING, rides.findById(id).orElseThrow().getStatus());
     assertEquals(2, offers.count());
+    assertEquals(3, outbox.count());
     mvc.perform(get("/api/rides/driver/offers").header("Authorization", driver(10)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$[0].ride.rideId").value(id));
@@ -268,5 +275,23 @@ class RideIntegrationTests {
     mvc.perform(get("/api/rides/driver/offers").header("Authorization", passenger()))
         .andExpect(status().isForbidden());
     mvc.perform(get("/api/rides/my")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void notificationFailureKeepsQueueForRetry() throws Exception {
+    create();
+    long queued = outbox.count();
+    assertTrue(queued >= 3);
+    NotificationClient offline =
+        request -> {
+          throw new IllegalStateException("offline");
+        };
+    new NotificationDispatcher(outbox, offline).deliverPending();
+    assertEquals(queued, outbox.count());
+    var delivered = new java.util.HashMap<String, NotificationRequest>();
+    NotificationClient online = request -> delivered.putIfAbsent(request.eventKey(), request);
+    new NotificationDispatcher(outbox, online).deliverPending();
+    assertEquals(0, outbox.count());
+    assertEquals(queued, delivered.size());
   }
 }

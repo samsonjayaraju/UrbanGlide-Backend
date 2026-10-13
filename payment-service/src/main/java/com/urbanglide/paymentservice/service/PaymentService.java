@@ -16,7 +16,10 @@ import org.springframework.transaction.annotation.Transactional;
 public class PaymentService {
   private final PaymentRepository payments;
 
-  public PaymentService(PaymentRepository payments) {
+  private final NotificationQueue notifications;
+
+  public PaymentService(PaymentRepository payments, NotificationQueue notifications) {
+    this.notifications = notifications;
     this.payments = payments;
   }
 
@@ -80,6 +83,12 @@ public class PaymentService {
     payment.setPaymentMethod(request.paymentMethod());
     payment.setPaymentStatus(PaymentStatus.SUCCESS);
     payment.setTransactionReference("DEMO-" + UUID.randomUUID());
+    notifications.add(
+        "payment:" + payment.getPaymentId() + ":SUCCESS",
+        payment.getPassengerId(),
+        payment.getRideId(),
+        "PAYMENT_SUCCESS",
+        "Payment for ride " + payment.getRideId() + " completed successfully.");
     return response(payment);
   }
 
