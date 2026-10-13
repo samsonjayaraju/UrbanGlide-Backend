@@ -35,12 +35,10 @@ public class Driver {
   @Column(nullable = false)
   private DriverAvailability availability;
 
-  private Double latitude;
-
-  private Double longitude;
-
-  @Column(nullable = false)
-  private Double rating;
+  // Retained only to allow inserts into an existing 3.5-era schema with a NOT NULL rating column.
+  // API ratings come exclusively from Rating Service; this legacy value is never read.
+  @Column(name = "rating", nullable = false, updatable = false)
+  private Double legacyRating;
 
   @Column(unique = true)
   private Long activeRideId;
@@ -121,28 +119,12 @@ public class Driver {
     this.availability = availability;
   }
 
-  public Double getLatitude() {
-    return latitude;
+  public Double getLegacyRating() {
+    return legacyRating;
   }
 
-  public void setLatitude(Double latitude) {
-    this.latitude = latitude;
-  }
-
-  public Double getLongitude() {
-    return longitude;
-  }
-
-  public void setLongitude(Double longitude) {
-    this.longitude = longitude;
-  }
-
-  public Double getRating() {
-    return rating;
-  }
-
-  public void setRating(Double rating) {
-    this.rating = rating;
+  public void setLegacyRating(Double rating) {
+    this.legacyRating = rating;
   }
 
   public Long getActiveRideId() {

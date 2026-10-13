@@ -1,0 +1,16 @@
+# Build output
+**/target/
+# Local workspace and operating system files
+.metadata/
+.DS_Store
+**/.DS_Store
+.classpath
+.project
+.settings/
+.idea/
+*.iml
+.vscode/
+# Local credentials
+.env
+.env.*
+!.env.example

@@ -42,4 +42,9 @@ public class InternalDriverController {
       @PathVariable @Positive Long id, @Valid @RequestBody ReservationRequest request) {
     drivers.release(id, request.rideId());
   }
+
+  @GetMapping("/{id}")
+  public DriverResponse byId(@PathVariable @Positive Long id) {
+    return drivers.internalById(id);
+  }
 }

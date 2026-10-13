@@ -1,11 +1,13 @@
 package com.urbanglide.driverservice.service;
 
+import com.urbanglide.driverservice.client.*;
 import com.urbanglide.driverservice.dto.*;
 import com.urbanglide.driverservice.entity.Driver;
 import com.urbanglide.driverservice.enums.DriverAvailability;
 import com.urbanglide.driverservice.exception.*;
 import com.urbanglide.driverservice.repository.DriverRepository;
 import com.urbanglide.driverservice.security.CurrentUser;
+import feign.FeignException;
 import java.util.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -15,8 +17,13 @@ import org.springframework.transaction.annotation.Transactional;
 public class DriverService {
   private final DriverRepository drivers;
 
-  public DriverService(DriverRepository drivers) {
+  private final LocationClient locations;
+  private final RatingClient ratings;
+
+  public DriverService(DriverRepository drivers, LocationClient locations, RatingClient ratings) {
     this.drivers = drivers;
+    this.locations = locations;
+    this.ratings = ratings;
   }
 
   @Transactional
@@ -28,7 +35,7 @@ public class DriverService {
     driver.setUserId(CurrentUser.id());
     apply(driver, request);
     driver.setAvailability(DriverAvailability.OFFLINE);
-    driver.setRating(0.0);
+    driver.setLegacyRating(0.0);
     return response(drivers.saveAndFlush(driver));
   }
 
@@ -62,12 +69,10 @@ public class DriverService {
     return response(driver);
   }
 
-  @Transactional
   public DriverResponse location(DriverLocationRequest request) {
     CurrentUser.requireRole("DRIVER");
-    Driver driver = locked(byUser(CurrentUser.id()).getDriverId());
-    driver.setLatitude(request.latitude());
-    driver.setLongitude(request.longitude());
+    Driver driver = byUser(CurrentUser.id());
+    RemoteCalls.call(() -> locations.update(driver.getDriverId(), request));
     return response(driver);
   }
 
@@ -79,27 +84,33 @@ public class DriverService {
       throw new ApiException(
           HttpStatus.CONFLICT,
           "BUSY is managed by ride assignment; an active ride must finish first");
-    if (request.availability() == DriverAvailability.AVAILABLE && driver.getLatitude() == null)
-      throw new ApiException(HttpStatus.BAD_REQUEST, "Set location before becoming AVAILABLE");
+    if (request.availability() == DriverAvailability.AVAILABLE) {
+      LocationResponse point = RemoteCalls.call(() -> locations.get(driver.getDriverId()));
+      if (point.stale())
+        throw new ApiException(
+            HttpStatus.BAD_REQUEST, "Update your location before becoming AVAILABLE");
+    }
     driver.setAvailability(request.availability());
     return response(driver);
   }
 
   public List<NearbyDriverResponse> nearby(double lat, double lon, double radius) {
-    return drivers.findByAvailability(DriverAvailability.AVAILABLE).stream()
-        .filter(d -> d.getLatitude() != null && d.getLongitude() != null)
-        .map(
-            d ->
-                new NearbyDriverResponse(
-                    d.getDriverId(),
-                    GeoDistance.kilometers(lat, lon, d.getLatitude(), d.getLongitude())))
-        .filter(d -> d.distanceKm() <= radius)
-        .sorted(Comparator.comparingDouble(NearbyDriverResponse::distanceKm))
-        .toList();
+    var nearby = RemoteCalls.call(() -> locations.nearby(lat, lon, radius));
+    var available = new HashSet<Long>();
+    drivers.findAllById(nearby.stream().map(NearbyDriverResponse::driverId).toList()).stream()
+        .filter(
+            d -> d.getAvailability() == DriverAvailability.AVAILABLE && d.getActiveRideId() == null)
+        .forEach(d -> available.add(d.getDriverId()));
+    return nearby.stream().filter(d -> available.contains(d.driverId())).toList();
   }
 
+  // Internal identity reads must not call Location/Rating again: that would create call cycles.
   public DriverResponse internalByUser(Long userId) {
-    return response(byUser(userId));
+    return identity(byUser(userId));
+  }
+
+  public DriverResponse internalById(Long id) {
+    return identity(find(id));
   }
 
   @Transactional
@@ -150,7 +161,7 @@ public class DriverService {
     d.setVehicleType(r.vehicleType());
   }
 
-  private DriverResponse response(Driver d) {
+  private DriverResponse identity(Driver d) {
     return new DriverResponse(
         d.getDriverId(),
         d.getUserId(),
@@ -161,8 +172,35 @@ public class DriverService {
         d.getVehicleModel(),
         d.getVehicleType(),
         d.getAvailability(),
-        d.getLatitude(),
-        d.getLongitude(),
-        d.getRating());
+        null,
+        null,
+        null);
+  }
+
+  private DriverResponse response(Driver d) {
+    LocationResponse point = null;
+    Double rating = null;
+    // A profile remains usable when an optional summary service is down. Null means unavailable.
+    try {
+      point = locations.get(d.getDriverId());
+    } catch (FeignException ignored) {
+    }
+    try {
+      rating = ratings.summary(d.getDriverId()).averageRating();
+    } catch (FeignException ignored) {
+    }
+    return new DriverResponse(
+        d.getDriverId(),
+        d.getUserId(),
+        d.getName(),
+        d.getPhone(),
+        d.getLicenseNumber(),
+        d.getVehicleNumber(),
+        d.getVehicleModel(),
+        d.getVehicleType(),
+        d.getAvailability(),
+        point == null ? null : point.latitude(),
+        point == null ? null : point.longitude(),
+        rating);
   }
 }

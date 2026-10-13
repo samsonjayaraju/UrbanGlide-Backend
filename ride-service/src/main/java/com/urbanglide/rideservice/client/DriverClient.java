@@ -21,4 +21,7 @@ public interface DriverClient {
 
   @PostMapping("/internal/drivers/{id}/release")
   void release(@PathVariable("id") Long driverId, @RequestBody ReservationRequest request);
+
+  @GetMapping("/internal/drivers/{id}")
+  DriverIdentity byId(@PathVariable("id") Long id);
 }
